@@ -27,6 +27,7 @@ type KubeRouterConfig struct {
 	PeerAsn            string
 	FullMeshMode       bool
 	GlobalHairpinMode  bool
+	IPVSAlg            string
 }
 
 func NewKubeRouterConfig() *KubeRouterConfig {
@@ -40,7 +41,8 @@ func NewKubeRouterConfig() *KubeRouterConfig {
 		RunRouter:          true,
 		FullMeshMode:       true,
 		AdvertiseClusterIp: false,
-		GlobalHairpinMode:  false}
+		GlobalHairpinMode:  false,
+		IPVSAlg:            "rr"}
 }
 
 func (s *KubeRouterConfig) AddFlags(fs *pflag.FlagSet) {
@@ -64,4 +66,5 @@ func (s *KubeRouterConfig) AddFlags(fs *pflag.FlagSet) {
 	fs.BoolVar(&s.FullMeshMode, "nodes-full-mesh", s.FullMeshMode, "When enabled each node in the cluster will setup BGP peer with rest of the nodes. True by default")
 	fs.StringVar(&s.HostnameOverride, "hostname-override", s.HostnameOverride, "If non-empty, will use this string as identification instead of the actual hostname.")
 	fs.BoolVar(&s.GlobalHairpinMode, "hairpin-mode", s.GlobalHairpinMode, "Adds iptable rules for every Service Endpoint to support hairpin traffic. False by default")
+	fs.StringVar(&s.IPVSAlg, "ipvs-alg", s.IPVSAlg, "Load blancer ALG(e.g. 'lc','dh','sh','rr' by default).Require run-service-proxy is True.")
 }

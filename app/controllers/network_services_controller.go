@@ -75,6 +75,7 @@ type NetworkServicesController struct {
 	masqueradeAll bool
 	globalHairpin bool
 	client        *kubernetes.Clientset
+	ipvsALG       string
 }
 
 // internal representation of kubernetes service
@@ -248,7 +249,7 @@ func (nsc *NetworkServicesController) syncIpvsServices(serviceInfoMap serviceInf
 		}
 
 		// create IPVS service for the service to be exposed through the cluster ip
-		ipvs_cluster_vip_svc, err := ipvsAddService(svc.clusterIP, protocol, uint16(svc.port), svc.sessionAffinity)
+		ipvs_cluster_vip_svc, err := ipvsAddService(svc.clusterIP, protocol, uint16(svc.port), svc.sessionAffinity, nsc.ipvsALG)
 		if err != nil {
 			glog.Errorf("Failed to create ipvs service for cluster ip: ", err.Error())
 			continue
@@ -260,7 +261,7 @@ func (nsc *NetworkServicesController) syncIpvsServices(serviceInfoMap serviceInf
 		var ipvs_nodeport_svc *libipvs.Service
 		var nodeServiceId string
 		if svc.nodePort != 0 {
-			ipvs_nodeport_svc, err = ipvsAddService(nsc.nodeIP, protocol, uint16(svc.nodePort), svc.sessionAffinity)
+			ipvs_nodeport_svc, err = ipvsAddService(nsc.nodeIP, protocol, uint16(svc.nodePort), svc.sessionAffinity, nsc.ipvsALG)
 			if err != nil {
 				glog.Errorf("Failed to create ipvs service for node port")
 				continue
@@ -681,7 +682,7 @@ func deleteMasqueradeIptablesRule() error {
 	return nil
 }
 
-func ipvsAddService(vip net.IP, protocol, port uint16, persistent bool) (*libipvs.Service, error) {
+func ipvsAddService(vip net.IP, protocol, port uint16, persistent bool, alg string) (*libipvs.Service, error) {
 	svcs, err := h.ListServices()
 	if err != nil {
 		return nil, err
@@ -694,12 +695,24 @@ func ipvsAddService(vip net.IP, protocol, port uint16, persistent bool) (*libipv
 			return svc, nil
 		}
 	}
+
+	switch alg {
+	case "sh":
+		algSchedName = libipvs.SourceHashing
+	case "lc":
+		algSchedName = libipvs.LeastConnection
+	case "dh":
+		algSchedName = libipvs.DestinationHashing
+	case "rr":
+		algSchedName = libipvs.RoundRobin
+	}
+
 	svc := libipvs.Service{
 		Address:       vip,
 		AddressFamily: syscall.AF_INET,
 		Protocol:      libipvs.Protocol(protocol),
 		Port:          port,
-		SchedName:     libipvs.RoundRobin,
+		SchedName:     algSchedName,
 	}
 
 	if persistent {
@@ -817,6 +830,8 @@ func NewNetworkServicesController(clientset *kubernetes.Clientset, config *optio
 	nsc.serviceMap = make(serviceInfoMap)
 	nsc.endpointsMap = make(endpointsInfoMap)
 	nsc.client = clientset
+	//liuzhenwei
+	nsc.ipvsALG = config.IPVSAlg
 
 	nsc.masqueradeAll = false
 	if config.MasqueradeAll {

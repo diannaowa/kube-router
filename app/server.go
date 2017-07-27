@@ -163,7 +163,7 @@ func (kr *KubeRouter) Run() error {
 	}
 
 	kr.stopApiWatchers()
-
+	CleanupConfigAndExit()
 	wg.Wait()
 	return nil
 }
