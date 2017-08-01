@@ -78,6 +78,7 @@ type NetworkServicesController struct {
 }
 
 // internal representation of kubernetes service
+// lbMethod :IPVS load balancing method
 type serviceInfo struct {
 	name            string
 	namespace       string
@@ -87,6 +88,7 @@ type serviceInfo struct {
 	nodePort        int
 	sessionAffinity bool
 	hairpin         bool
+	lbMethod        string
 }
 
 // map of all services, with unique service id(namespace name, service name, port) as key
@@ -248,7 +250,7 @@ func (nsc *NetworkServicesController) syncIpvsServices(serviceInfoMap serviceInf
 		}
 
 		// create IPVS service for the service to be exposed through the cluster ip
-		ipvs_cluster_vip_svc, err := ipvsAddService(svc.clusterIP, protocol, uint16(svc.port), svc.sessionAffinity)
+		ipvs_cluster_vip_svc, err := ipvsAddService(svc.clusterIP, protocol, uint16(svc.port), svc.sessionAffinity, svc.lbMethod)
 		if err != nil {
 			glog.Errorf("Failed to create ipvs service for cluster ip: ", err.Error())
 			continue
@@ -260,7 +262,7 @@ func (nsc *NetworkServicesController) syncIpvsServices(serviceInfoMap serviceInf
 		var ipvs_nodeport_svc *libipvs.Service
 		var nodeServiceId string
 		if svc.nodePort != 0 {
-			ipvs_nodeport_svc, err = ipvsAddService(nsc.nodeIP, protocol, uint16(svc.nodePort), svc.sessionAffinity)
+			ipvs_nodeport_svc, err = ipvsAddService(nsc.nodeIP, protocol, uint16(svc.nodePort), svc.sessionAffinity, svc.lbMethod)
 			if err != nil {
 				glog.Errorf("Failed to create ipvs service for node port")
 				continue
@@ -408,6 +410,7 @@ func buildServicesInfo() serviceInfoMap {
 
 			svcInfo.sessionAffinity = (svc.Spec.SessionAffinity == "ClientIP")
 			_, svcInfo.hairpin = svc.ObjectMeta.Annotations["kube-router.io/hairpin-mode"]
+			svcInfo.lbMethod, _ = svc.ObjectMeta.Annotations["kube-router.io/lb-method"]
 
 			svcId := generateServiceId(svc.Namespace, svc.Name, port.Name)
 			serviceMap[svcId] = &svcInfo
@@ -681,7 +684,7 @@ func deleteMasqueradeIptablesRule() error {
 	return nil
 }
 
-func ipvsAddService(vip net.IP, protocol, port uint16, persistent bool) (*libipvs.Service, error) {
+func ipvsAddService(vip net.IP, protocol, port uint16, persistent bool, lbMethod string) (*libipvs.Service, error) {
 	svcs, err := h.ListServices()
 	if err != nil {
 		return nil, err
@@ -694,12 +697,25 @@ func ipvsAddService(vip net.IP, protocol, port uint16, persistent bool) (*libipv
 			return svc, nil
 		}
 	}
+	// load balancing method
+	var schedName string
+	switch lbMethod {
+	case "sh":
+		schedName = libipvs.SourceHashing
+	case "lc":
+		schedName = libipvs.LeastConnection
+	case "dh":
+		schedName = libipvs.DestinationHashing
+	default:
+		schedName = libipvs.RoundRobin
+	}
+
 	svc := libipvs.Service{
 		Address:       vip,
 		AddressFamily: syscall.AF_INET,
 		Protocol:      libipvs.Protocol(protocol),
 		Port:          port,
-		SchedName:     libipvs.RoundRobin,
+		SchedName:     schedName,
 	}
 
 	if persistent {
